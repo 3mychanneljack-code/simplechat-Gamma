@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Chat</title>
+
+<style>
+body{margin:0;font-family:sans-serif;background:#020617;color:#e5e7eb}
+header{display:flex;align-items:center;padding:10px;border-bottom:1px solid #1f2937}
+button,input{background:#020617;color:#e5e7eb;border:1px solid #1f2937;border-radius:6px;padding:6px}
+#layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 50px)}
+#sidebar{border-right:1px solid #1f2937;padding:10px;display:flex;flex-direction:column}
+.chatItem{padding:8px;border-bottom:1px solid #1f2937;cursor:pointer}
+.chatItem:hover{background:#111827}
+
+#messages{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.bubble{max-width:70%;padding:8px 10px;border-radius:12px}
+.me{align-self:flex-end;background:#2563eb}
+.them{align-self:flex-start;background:#374151}
+.username{font-size:12px;opacity:.7;margin-bottom:2px}
+
+#callPopup{
+ position:fixed;inset:0;background:#000a;
+ display:none;align-items:center;justify-content:center;z-index:999;
+}
+#callBox{background:#020617;padding:20px;border-radius:12px;text-align:center}
+video{width:220px;border-radius:10px;margin:6px}
+</style>
+</head>
+
+<body>
+
+<header>
+<strong>Simple Chat</strong>
+<span id="user" style="margin-left:auto"></span>
+</header>
+
+<div id="layout">
+<div id="sidebar">
+<button onclick="createChat()">➕ Create Chat</button>
+<div id="chats"></div>
+</div>
+
+<div style="display:flex;flex-direction:column">
+<div style="display:flex;gap:6px;padding:10px;border-bottom:1px solid #1f2937">
+<button onclick="startCall()">📞</button>
+<input id="msg" placeholder="Message..." style="flex:1">
+<button onclick="send()">Send</button>
+</div>
+
+<div id="messages"></div>
+</div>
+</div>
+
+<div id="callPopup">
+ <div id="callBox">
+  <h3 id="callTitle">Calling…</h3>
+  <video id="localVideo" autoplay muted></video>
+  <video id="remoteVideo" autoplay></video><br>
+  <button onclick="answerCall()">Accept</button>
+  <button onclick="hangup()">Hang Up</button>
+ </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, doc, setDoc, getDoc, onSnapshot, query, where, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+const firebaseConfig={
+ apiKey:"AIzaSyCufn5lJsYRhTyMpOSJL3o0AjUlGFgBdI8",
+ authDomain:"simple-chat-77c11.firebaseapp.com",
+ projectId:"simple-chat-77c11"
+};
+
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const db=getFirestore(app);
+
+let me,myUsername,currentChat;
+let pc,localStream,callRef;
+
+signInWithPopup(auth,new GoogleAuthProvider());
+
+onAuthStateChanged(auth,async u=>{
+ if(!u)return;
+ me=u;
+
+ const snap=await getDoc(doc(db,"users",me.uid));
+ if(!snap.exists()){
+  myUsername=prompt("username").toLowerCase();
+  await setDoc(doc(db,"users",me.uid),{username:myUsername});
+ }else myUsername=snap.data().username;
+
+ user.textContent=myUsername;
+ loadChats();
+ listenIncomingCalls();
+});
+
+function loadChats(){
+ const q=query(collection(db,"chats"),where("members","array-contains",me.uid));
+ onSnapshot(q,s=>{
+  chats.innerHTML="";
+  s.forEach(d=>{
+   const div=document.createElement("div");
+   div.className="chatItem";
+   div.textContent=d.data().name;
+   div.onclick=()=>openChat(d.id);
+   chats.appendChild(div);
+  });
+ });
+}
+
+window.createChat=async()=>{
+ const uname=prompt("username");
+ const q=query(collection(db,"users"),where("username","==",uname));
+ const s=await getDocs(q);
+ if(s.empty)return alert("not found");
+ const other=s.docs[0].id;
+ await addDoc(collection(db,"chats"),{
+  name:uname,
+  members:[me.uid,other]
+ });
+};
+
+function openChat(id){
+ currentChat=id;
+ onSnapshot(collection(db,"chats",id,"messages"),snap=>{
+  messages.innerHTML="";
+  snap.forEach(d=>{
+   const m=d.data();
+   const wrap=document.createElement("div");
+   wrap.className="bubble "+(m.from===me.uid?"me":"them");
+   const u=document.createElement("div");
+   u.className="username";
+   u.textContent=m.username;
+   const t=document.createElement("div");
+   t.textContent=m.text;
+   wrap.append(u,t);
+   messages.appendChild(wrap);
+  });
+ });
+}
+
+window.send=()=>{
+ if(!msg.value||!currentChat)return;
+ addDoc(collection(db,"chats",currentChat,"messages"),{
+  from:me.uid,
+  username:myUsername,
+  text:msg.value
+ });
+ msg.value="";
+};
+
+/////// CALLS ///////
+
+async function setupPC(){
+ pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+
+ localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+ localVideo.srcObject=localStream;
+ localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+
+ pc.ontrack=e=>remoteVideo.srcObject=e.streams[0];
+
+ pc.onicecandidate=e=>{
+  if(e.candidate) addDoc(collection(callRef,"candidates"),e.candidate.toJSON());
+ };
+}
+
+window.startCall=async()=>{
+ if(!currentChat)return alert("open chat");
+ callPopup.style.display="flex";
+ callTitle.textContent="Calling…";
+
+ callRef=doc(collection(db,"calls"));
+ await setDoc(callRef,{chat:currentChat,from:me.uid});
+
+ await setupPC();
+
+ const offer=await pc.createOffer();
+ await pc.setLocalDescription(offer);
+ await updateDoc(callRef,{offer});
+
+ onSnapshot(callRef,async snap=>{
+  const d=snap.data();
+  if(d.answer&&!pc.currentRemoteDescription){
+   await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+  }
+ });
+
+ onSnapshot(collection(callRef,"candidates"),snap=>{
+  snap.docChanges().forEach(c=>{
+   if(c.type==="added") pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+  });
+ });
+};
+
+function listenIncomingCalls(){
+ const q=query(collection(db,"calls"),where("chat","==",currentChat));
+ onSnapshot(q,s=>{
+  s.forEach(async d=>{
+   if(d.data().from!==me.uid && !pc){
+    callRef=d.ref;
+    callPopup.style.display="flex";
+    callTitle.textContent="Incoming Call";
+   }
+  });
+ });
+}
+
+window.answerCall=async()=>{
+ await setupPC();
+ const snap=await getDoc(callRef);
+ const offer=snap.data().offer;
+ await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+ const answer=await pc.createAnswer();
+ await pc.setLocalDescription(answer);
+ await updateDoc(callRef,{answer});
+
+ onSnapshot(collection(callRef,"candidates"),snap=>{
+  snap.docChanges().forEach(c=>{
+   if(c.type==="added") pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+  });
+ });
+};
+
+window.hangup=async()=>{
+ callPopup.style.display="none";
+ pc?.close();
+ pc=null;
+ localStream?.getTracks().forEach(t=>t.stop());
+};
+</script>
+
+</body>
+</html>
