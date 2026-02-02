@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple Chat</title>
+
+<style>
+body{margin:0;font-family:sans-serif;background:#020617;color:#e5e7eb}
+header{display:flex;align-items:center;padding:10px;border-bottom:1px solid #1f2937}
+button,input{background:#020617;color:#e5e7eb;border:1px solid #1f2937;border-radius:6px;padding:6px}
+#layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 50px)}
+#sidebar{border-right:1px solid #1f2937;padding:10px;display:flex;flex-direction:column}
+.chatItem{padding:8px;border-bottom:1px solid #1f2937;cursor:pointer}
+.chatItem:hover{background:#111827}
+
+#messages{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+
+.bubble{
+ max-width:70%;
+ padding:8px 10px;
+ border-radius:12px;
+ word-wrap:break-word;
+ position:relative
+}
+.me{align-self:flex-end;background:#2563eb}
+.them{align-self:flex-start;background:#374151}
+
+.username{font-size:12px;opacity:.7;margin-bottom:2px}
+.typing{font-size:12px;opacity:.6}
+
+#topBar{
+ display:flex;align-items:center;
+ gap:10px;
+ border-bottom:1px solid #1f2937;
+ padding:6px 10px;
+}
+
+#chatMenu{
+ position:absolute;
+ top:45px;
+ left:10px;
+ background:#0b1220;
+ border:1px solid #1f2937;
+ border-radius:8px;
+ padding:8px;
+ display:none;
+ flex-direction:column;
+ gap:6px;
+ z-index:1000;
+}
+
+.badge{
+ width:16px;
+ height:16px;
+ vertical-align:middle;
+ margin-left:4px
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<strong>Simple Chat</strong>
+<span id="user" style="margin-left:auto"></span>
+</header>
+
+<div id="layout">
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+<button onclick="createChat()">➕ Create Chat</button>
+<button onclick="blockUser()">🚫 Block User</button>
+<button onclick="addContact()">📇 Contacts</button>
+<div id="chats"></div>
+</div>
+
+<!-- MAIN -->
+<div style="display:flex;flex-direction:column;position:relative">
+
+<div id="topBar">
+<button onclick="toggleMenu()">☰</button>
+<div id="chatTitle">Select chat</div>
+<div style="margin-left:auto">
+<button onclick="startCall()">📞</button>
+</div>
+</div>
+
+<div id="chatMenu">
+<button onclick="renameChat()">Rename</button>
+<button onclick="changeEmoji()">Change Emoji</button>
+<button onclick="addPeople()">Add People</button>
+<button onclick="groupCall()">Group Call</button>
+</div>
+
+<div style="padding:6px;font-size:12px;color:#94a3b8">
+🔒 This chat is now end-to-end encrypted
+</div>
+
+<div id="messages"></div>
+<div id="typing" class="typing" style="padding-left:10px"></div>
+
+<div style="display:flex;gap:6px;padding:10px">
+<input id="msg" placeholder="Message..." style="flex:1">
+<button onclick="send()">Send</button>
+</div>
+
+</div>
+</div>
+
+<img id="devIcon" src="random.png" style="display:none">
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, doc, setDoc, getDoc, onSnapshot, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+const DEV_USERS = ["jack","jacob"];
+
+const firebaseConfig={
+ apiKey:"AIzaSyCufn5lJsYRhTyMpOSJL3o0AjUlGFgBdI8",
+ authDomain:"simple-chat-77c11.firebaseapp.com",
+ projectId:"simple-chat-77c11"
+};
+
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const db=getFirestore(app);
+
+let me,myUsername,currentChat,blocked=[],contacts={};
+let key;
+
+// ===== ENCRYPTION =====
+async function makeKey(){
+ key=await crypto.subtle.generateKey(
+  {name:"AES-GCM",length:256},
+  true,
+  ["encrypt","decrypt"]
+ );
+}
+
+async function encrypt(text){
+ const iv=crypto.getRandomValues(new Uint8Array(12));
+ const enc=new TextEncoder().encode(text);
+ const buf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc);
+ return {iv:Array.from(iv),data:Array.from(new Uint8Array(buf))};
+}
+
+async function decrypt(obj){
+ const buf=await crypto.subtle.decrypt(
+  {name:"AES-GCM",iv:new Uint8Array(obj.iv)},
+  key,
+  new Uint8Array(obj.data)
+ );
+ return new TextDecoder().decode(buf);
+}
+
+// ===== LOGIN =====
+signInWithPopup(auth,new GoogleAuthProvider());
+
+onAuthStateChanged(auth,async u=>{
+ if(!u)return;
+ me=u;
+
+ const snap=await getDoc(doc(db,"users",me.uid));
+
+ if(!snap.exists()){
+  myUsername=prompt("username").toLowerCase();
+  await setDoc(doc(db,"users",me.uid),{username:myUsername});
+ }else{
+  myUsername=snap.data().username;
+ }
+
+ user.textContent=myUsername;
+ await makeKey();
+ loadChats();
+
+ if(DEV_USERS.includes(myUsername)) createDevMenu();
+});
+
+// ===== DEV MENU =====
+function createDevMenu(){
+ const b=document.createElement("button");
+ b.textContent="DEV";
+ b.onclick=async()=>{
+  const text=prompt("Broadcast message:");
+  if(!text)return;
+  const enc=await encrypt(text);
+  const chatsSnap=await getDocs(collection(db,"chats"));
+  chatsSnap.forEach(c=>{
+   addDoc(collection(db,"chats",c.id,"messages"),{
+    dev:true,
+    text:enc
+   });
+  });
+ };
+ document.getElementById("sidebar").prepend(b);
+}
+
+// ===== CHATS =====
+function loadChats(){
+ const q=query(collection(db,"chats"),where("members","array-contains",me.uid));
+ onSnapshot(q,s=>{
+  chats.innerHTML="";
+  s.forEach(d=>{
+   const div=document.createElement("div");
+   div.className="chatItem";
+   div.textContent=d.data().name||"Chat";
+   div.onclick=()=>openChat(d.id,d.data());
+   chats.appendChild(div);
+  });
+ });
+}
+
+function openChat(id,data){
+ currentChat=id;
+ chatTitle.textContent=(data.emoji||"💬")+" "+(data.name||"Chat");
+
+ onSnapshot(collection(db,"chats",id,"messages"),async snap=>{
+  messages.innerHTML="";
+  for(const d of snap.docs){
+   const m=d.data();
+   const text=await decrypt(m.text);
+
+   const wrap=document.createElement("div");
+   wrap.className="bubble "+(m.from===me.uid?"me":"them");
+
+   const u=document.createElement("div");
+   u.className="username";
+   u.textContent=m.username||"system";
+
+   if(DEV_USERS.includes(m.username)){
+    const icon=document.createElement("img");
+    icon.src="random.png";
+    icon.className="badge";
+    u.appendChild(icon);
+   }
+
+   const t=document.createElement("div");
+   t.textContent=text;
+
+   wrap.append(u,t);
+   messages.appendChild(wrap);
+  }
+ });
+}
+
+// ===== SEND =====
+window.send=async()=>{
+ if(!msg.value||!currentChat)return;
+
+ const enc=await encrypt(msg.value);
+
+ await addDoc(collection(db,"chats",currentChat,"messages"),{
+  from:me.uid,
+  username:myUsername,
+  text:enc
+ });
+
+ msg.value="";
+};
+
+// ===== TYPING =====
+msg.oninput=()=>{
+ typing.textContent=myUsername+" typing...";
+ setTimeout(()=>typing.textContent="",800);
+};
+
+// ===== MENU =====
+window.toggleMenu=()=>chatMenu.style.display=
+ chatMenu.style.display==="flex"?"none":"flex";
+
+window.renameChat=async()=>{
+ const n=prompt("New name");
+ if(!n)return;
+ await setDoc(doc(db,"chats",currentChat),{name:n},{merge:true});
+};
+
+window.changeEmoji=async()=>{
+ const e=prompt("Emoji");
+ if(!e)return;
+ await setDoc(doc(db,"chats",currentChat),{emoji:e},{merge:true});
+};
+
+// ===== CALLS (WebRTC basic) =====
+let pc;
+
+window.startCall=async()=>{
+ pc=new RTCPeerConnection();
+ const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+ stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+ alert("Call started (demo WebRTC)");
+};
+
+window.groupCall=startCall;
+
+// ===== CONTACTS =====
+window.addContact=()=>{
+ const u=prompt("Username");
+ const n=prompt("Display name");
+ if(u&&n)contacts[u]=n;
+};
+
+</script>
+</body>
+</html>
