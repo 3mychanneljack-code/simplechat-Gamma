@@ -20,12 +20,22 @@ button,input{background:#020617;color:#e5e7eb;border:1px solid #1f2937;border-ra
 .them{align-self:flex-start;background:#374151}
 .username{font-size:12px;opacity:.7;margin-bottom:2px}
 
+#topBar{display:flex;gap:6px;padding:10px;border-bottom:1px solid #1f2937}
+
 #callPopup{
  position:fixed;inset:0;background:#000a;
  display:none;align-items:center;justify-content:center;z-index:999;
 }
 #callBox{background:#020617;padding:20px;border-radius:12px;text-align:center}
 video{width:220px;border-radius:10px;margin:6px}
+
+#chatMenu{
+ position:absolute;
+ top:50px;left:10px;
+ background:#020617;border:1px solid #1f2937;
+ padding:8px;border-radius:8px;
+ display:none;flex-direction:column;gap:6px;z-index:99
+}
 </style>
 </head>
 
@@ -37,25 +47,45 @@ video{width:220px;border-radius:10px;margin:6px}
 </header>
 
 <div id="layout">
+
 <div id="sidebar">
 <button onclick="createChat()">➕ Create Chat</button>
+<button onclick="blockUser()">🚫 Block User</button>
+<button onclick="addContact()">📇 Contacts</button>
+<div id="devArea"></div>
 <div id="chats"></div>
 </div>
 
-<div style="display:flex;flex-direction:column">
-<div style="display:flex;gap:6px;padding:10px;border-bottom:1px solid #1f2937">
-<button onclick="startCall()">📞</button>
+<div style="display:flex;flex-direction:column;position:relative">
+
+<div id="topBar">
+<button onclick="toggleMenu()">☰</button>
+<div id="chatTitle">Select chat</div>
+<button style="margin-left:auto" onclick="startCall()">📞</button>
+</div>
+
+<div id="chatMenu">
+<button onclick="renameChat()">Rename</button>
+<button onclick="changeEmoji()">Emoji</button>
+<button onclick="addPeople()">Add People</button>
+<button onclick="removePeople()">Remove People</button>
+</div>
+
+<div style="flex:1;display:flex;flex-direction:column">
+<div id="messages"></div>
+</div>
+
+<div style="display:flex;gap:6px;padding:10px;border-top:1px solid #1f2937">
 <input id="msg" placeholder="Message..." style="flex:1">
 <button onclick="send()">Send</button>
 </div>
 
-<div id="messages"></div>
 </div>
 </div>
 
 <div id="callPopup">
  <div id="callBox">
-  <h3 id="callTitle">Calling…</h3>
+  <h3 id="callTitle">Call</h3>
   <video id="localVideo" autoplay muted></video>
   <video id="remoteVideo" autoplay></video><br>
   <button onclick="answerCall()">Accept</button>
@@ -68,6 +98,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { getFirestore, collection, addDoc, doc, setDoc, getDoc, onSnapshot, query, where, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+const DEV_USERS=["jack","jacob"];
+
 const firebaseConfig={
  apiKey:"AIzaSyCufn5lJsYRhTyMpOSJL3o0AjUlGFgBdI8",
  authDomain:"simple-chat-77c11.firebaseapp.com",
@@ -78,7 +110,7 @@ const app=initializeApp(firebaseConfig);
 const auth=getAuth(app);
 const db=getFirestore(app);
 
-let me,myUsername,currentChat;
+let me,myUsername,currentChat,blocked=[],contacts={};
 let pc,localStream,callRef;
 
 signInWithPopup(auth,new GoogleAuthProvider());
@@ -90,14 +122,40 @@ onAuthStateChanged(auth,async u=>{
  const snap=await getDoc(doc(db,"users",me.uid));
  if(!snap.exists()){
   myUsername=prompt("username").toLowerCase();
-  await setDoc(doc(db,"users",me.uid),{username:myUsername});
- }else myUsername=snap.data().username;
+  await setDoc(doc(db,"users",me.uid),{username:myUsername,blocked:[],contacts:{}});
+ }else{
+  const d=snap.data();
+  myUsername=d.username;
+  blocked=d.blocked||[];
+  contacts=d.contacts||{};
+ }
 
  user.textContent=myUsername;
  loadChats();
  listenIncomingCalls();
+
+ if(DEV_USERS.includes(myUsername)) makeDevMenu();
 });
 
+function makeDevMenu(){
+ const b=document.createElement("button");
+ b.textContent="DEV";
+ b.onclick=async()=>{
+  const msg=prompt("Broadcast:");
+  if(!msg)return;
+  const chatsSnap=await getDocs(collection(db,"chats"));
+  chatsSnap.forEach(c=>{
+   addDoc(collection(db,"chats",c.id,"messages"),{
+    from:"dev",
+    username:"DEV",
+    text:msg
+   });
+  });
+ };
+ devArea.appendChild(b);
+}
+
+// ---------- CHATS ----------
 function loadChats(){
  const q=query(collection(db,"chats"),where("members","array-contains",me.uid));
  onSnapshot(q,s=>{
@@ -105,8 +163,8 @@ function loadChats(){
   s.forEach(d=>{
    const div=document.createElement("div");
    div.className="chatItem";
-   div.textContent=d.data().name;
-   div.onclick=()=>openChat(d.id);
+   div.textContent=(d.data().emoji||"💬")+" "+d.data().name;
+   div.onclick=()=>openChat(d.id,d.data());
    chats.appendChild(div);
   });
  });
@@ -114,32 +172,42 @@ function loadChats(){
 
 window.createChat=async()=>{
  const uname=prompt("username");
- const q=query(collection(db,"users"),where("username","==",uname));
+ if(!uname)return;
+ const q=query(collection(db,"users"),where("username","==",uname.toLowerCase()));
  const s=await getDocs(q);
  if(s.empty)return alert("not found");
  const other=s.docs[0].id;
  await addDoc(collection(db,"chats"),{
   name:uname,
+  emoji:"💬",
   members:[me.uid,other]
  });
 };
 
-function openChat(id){
+function openChat(id,data){
  currentChat=id;
+ chatTitle.textContent=(data.emoji||"💬")+" "+data.name;
+
  onSnapshot(collection(db,"chats",id,"messages"),snap=>{
   messages.innerHTML="";
   snap.forEach(d=>{
    const m=d.data();
+   if(blocked.includes(m.from))return;
+
    const wrap=document.createElement("div");
    wrap.className="bubble "+(m.from===me.uid?"me":"them");
+
    const u=document.createElement("div");
    u.className="username";
-   u.textContent=m.username;
+   u.textContent=contacts[m.username]||m.username;
+
    const t=document.createElement("div");
    t.textContent=m.text;
+
    wrap.append(u,t);
    messages.appendChild(wrap);
   });
+  messages.scrollTop=messages.scrollHeight;
  });
 }
 
@@ -153,55 +221,97 @@ window.send=()=>{
  msg.value="";
 };
 
-/////// CALLS ///////
+// ---------- MENU ----------
+window.toggleMenu=()=>chatMenu.style.display=
+ chatMenu.style.display==="flex"?"none":"flex";
 
+window.renameChat=async()=>{
+ const n=prompt("new name");
+ if(n)await setDoc(doc(db,"chats",currentChat),{name:n},{merge:true});
+};
+
+window.changeEmoji=async()=>{
+ const e=prompt("emoji");
+ if(e)await setDoc(doc(db,"chats",currentChat),{emoji:e},{merge:true});
+};
+
+window.addPeople=async()=>{
+ const u=prompt("username");
+ const q=query(collection(db,"users"),where("username","==",u));
+ const s=await getDocs(q);
+ if(s.empty)return;
+ const ref=doc(db,"chats",currentChat);
+ const snap=await getDoc(ref);
+ await updateDoc(ref,{members:[...snap.data().members,s.docs[0].id]});
+};
+
+window.removePeople=async()=>{
+ const u=prompt("username");
+ const q=query(collection(db,"users"),where("username","==",u));
+ const s=await getDocs(q);
+ if(s.empty)return;
+ const ref=doc(db,"chats",currentChat);
+ const snap=await getDoc(ref);
+ await updateDoc(ref,{members:snap.data().members.filter(x=>x!==s.docs[0].id)});
+};
+
+// ---------- CONTACTS / BLOCK ----------
+window.addContact=()=>{
+ const u=prompt("username");
+ const n=prompt("display name");
+ if(!u||!n)return;
+ contacts[u]=n;
+ setDoc(doc(db,"users",me.uid),{username:myUsername,blocked,contacts},{merge:true});
+};
+
+window.blockUser=async()=>{
+ const u=prompt("username");
+ const q=query(collection(db,"users"),where("username","==",u));
+ const s=await getDocs(q);
+ if(s.empty)return;
+ blocked.push(s.docs[0].id);
+ await setDoc(doc(db,"users",me.uid),{username:myUsername,blocked,contacts},{merge:true});
+};
+
+// ---------- CALLS ----------
 async function setupPC(){
  pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-
  localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
  localVideo.srcObject=localStream;
  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-
  pc.ontrack=e=>remoteVideo.srcObject=e.streams[0];
-
  pc.onicecandidate=e=>{
-  if(e.candidate) addDoc(collection(callRef,"candidates"),e.candidate.toJSON());
+  if(e.candidate)addDoc(collection(callRef,"candidates"),e.candidate.toJSON());
  };
 }
 
 window.startCall=async()=>{
- if(!currentChat)return alert("open chat");
+ if(!currentChat)return;
  callPopup.style.display="flex";
  callTitle.textContent="Calling…";
-
  callRef=doc(collection(db,"calls"));
  await setDoc(callRef,{chat:currentChat,from:me.uid});
-
  await setupPC();
-
  const offer=await pc.createOffer();
  await pc.setLocalDescription(offer);
  await updateDoc(callRef,{offer});
-
- onSnapshot(callRef,async snap=>{
-  const d=snap.data();
+ onSnapshot(callRef,async s=>{
+  const d=s.data();
   if(d.answer&&!pc.currentRemoteDescription){
    await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
   }
  });
-
  onSnapshot(collection(callRef,"candidates"),snap=>{
   snap.docChanges().forEach(c=>{
-   if(c.type==="added") pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+   if(c.type==="added")pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
   });
  });
 };
 
 function listenIncomingCalls(){
- const q=query(collection(db,"calls"),where("chat","==",currentChat));
- onSnapshot(q,s=>{
-  s.forEach(async d=>{
-   if(d.data().from!==me.uid && !pc){
+ onSnapshot(collection(db,"calls"),snap=>{
+  snap.forEach(d=>{
+   if(d.data().from!==me.uid && d.data().chat===currentChat && !pc){
     callRef=d.ref;
     callPopup.style.display="flex";
     callTitle.textContent="Incoming Call";
@@ -213,24 +323,15 @@ function listenIncomingCalls(){
 window.answerCall=async()=>{
  await setupPC();
  const snap=await getDoc(callRef);
- const offer=snap.data().offer;
- await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
+ await pc.setRemoteDescription(new RTCSessionDescription(snap.data().offer));
  const answer=await pc.createAnswer();
  await pc.setLocalDescription(answer);
  await updateDoc(callRef,{answer});
-
- onSnapshot(collection(callRef,"candidates"),snap=>{
-  snap.docChanges().forEach(c=>{
-   if(c.type==="added") pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
-  });
- });
 };
 
-window.hangup=async()=>{
+window.hangup=()=>{
  callPopup.style.display="none";
- pc?.close();
- pc=null;
+ pc?.close(); pc=null;
  localStream?.getTracks().forEach(t=>t.stop());
 };
 </script>
