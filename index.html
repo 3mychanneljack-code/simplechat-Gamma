@@ -2,339 +2,149 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Simple Chat</title>
-
-<style>
-body{margin:0;font-family:sans-serif;background:#020617;color:#e5e7eb}
-header{display:flex;align-items:center;padding:10px;border-bottom:1px solid #1f2937}
-button,input{background:#020617;color:#e5e7eb;border:1px solid #1f2937;border-radius:6px;padding:6px}
-#layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 50px)}
-#sidebar{border-right:1px solid #1f2937;padding:10px;display:flex;flex-direction:column}
-.chatItem{padding:8px;border-bottom:1px solid #1f2937;cursor:pointer}
-.chatItem:hover{background:#111827}
-
-#messages{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
-.bubble{max-width:70%;padding:8px 10px;border-radius:12px}
-.me{align-self:flex-end;background:#2563eb}
-.them{align-self:flex-start;background:#374151}
-.username{font-size:12px;opacity:.7;margin-bottom:2px}
-
-#topBar{display:flex;gap:6px;padding:10px;border-bottom:1px solid #1f2937}
-
-#callPopup{
- position:fixed;inset:0;background:#000a;
- display:none;align-items:center;justify-content:center;z-index:999;
-}
-#callBox{background:#020617;padding:20px;border-radius:12px;text-align:center}
-video{width:220px;border-radius:10px;margin:6px}
-
-#chatMenu{
- position:absolute;
- top:50px;left:10px;
- background:#020617;border:1px solid #1f2937;
- padding:8px;border-radius:8px;
- display:none;flex-direction:column;gap:6px;z-index:99
-}
-</style>
-</head>
-
-<body>
-
-<header>
-<strong>Simple Chat</strong>
-<span id="user" style="margin-left:auto"></span>
-</header>
-
-<div id="layout">
-
-<div id="sidebar">
-<button onclick="createChat()">➕ Create Chat</button>
-<button onclick="blockUser()">🚫 Block User</button>
-<button onclick="addContact()">📇 Contacts</button>
-<div id="devArea"></div>
-<div id="chats"></div>
-</div>
-
-<div style="display:flex;flex-direction:column;position:relative">
-
-<div id="topBar">
-<button onclick="toggleMenu()">☰</button>
-<div id="chatTitle">Select chat</div>
-<button style="margin-left:auto" onclick="startCall()">📞</button>
-</div>
-
-<div id="chatMenu">
-<button onclick="renameChat()">Rename</button>
-<button onclick="changeEmoji()">Emoji</button>
-<button onclick="addPeople()">Add People</button>
-<button onclick="removePeople()">Remove People</button>
-</div>
-
-<div style="flex:1;display:flex;flex-direction:column">
-<div id="messages"></div>
-</div>
-
-<div style="display:flex;gap:6px;padding:10px;border-top:1px solid #1f2937">
-<input id="msg" placeholder="Message..." style="flex:1">
-<button onclick="send()">Send</button>
-</div>
-
-</div>
-</div>
-
-<div id="callPopup">
- <div id="callBox">
-  <h3 id="callTitle">Call</h3>
-  <video id="localVideo" autoplay muted></video>
-  <video id="remoteVideo" autoplay></video><br>
-  <button onclick="answerCall()">Accept</button>
-  <button onclick="hangup()">Hang Up</button>
- </div>
-</div>
-
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, doc, setDoc, getDoc, onSnapshot, query, where, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, addDoc, collection, onSnapshot, query, orderBy, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const DEV_USERS=["jack","jacob"];
-
-const firebaseConfig={
+const firebaseConfig = {
  apiKey:"AIzaSyCufn5lJsYRhTyMpOSJL3o0AjUlGFgBdI8",
  authDomain:"simple-chat-77c11.firebaseapp.com",
  projectId:"simple-chat-77c11"
 };
 
-const app=initializeApp(firebaseConfig);
-const auth=getAuth(app);
-const db=getFirestore(app);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-let me,myUsername,currentChat,blocked=[],contacts={};
-let pc,localStream,callRef;
+const DEV_USERS = ["jack","jacob"];
+let me, myUsername, currentChat, isDev=false;
 
-signInWithPopup(auth,new GoogleAuthProvider());
+window.login=()=>signInWithPopup(auth,new GoogleAuthProvider());
 
-onAuthStateChanged(auth,async u=>{
- if(!u)return;
- me=u;
-
- const snap=await getDoc(doc(db,"users",me.uid));
+onAuthStateChanged(auth, async user=>{
+ if(!user) return;
+ me=user;
+ let snap=await getDoc(doc(db,"users",me.uid));
  if(!snap.exists()){
-  myUsername=prompt("username").toLowerCase();
-  await setDoc(doc(db,"users",me.uid),{username:myUsername,blocked:[],contacts:{}});
- }else{
-  const d=snap.data();
-  myUsername=d.username;
-  blocked=d.blocked||[];
-  contacts=d.contacts||{};
- }
-
- user.textContent=myUsername;
- loadChats();
- listenIncomingCalls();
-
- if(DEV_USERS.includes(myUsername)) makeDevMenu();
+  myUsername=prompt("Create username").toLowerCase();
+  await setDoc(doc(db,"users",me.uid),{username:myUsername});
+ } else myUsername=snap.data().username;
+ isDev=DEV_USERS.includes(myUsername);
+ initUI();
 });
 
-function makeDevMenu(){
- const b=document.createElement("button");
- b.textContent="DEV";
- b.onclick=async()=>{
-  const msg=prompt("Broadcast:");
-  if(!msg)return;
-  const chatsSnap=await getDocs(collection(db,"chats"));
-  chatsSnap.forEach(c=>{
-   addDoc(collection(db,"chats",c.id,"messages"),{
-    from:"dev",
-    username:"DEV",
-    text:msg
-   });
-  });
- };
- devArea.appendChild(b);
+function initUI(){
+ document.getElementById("login").style.display="none";
+ document.getElementById("app").style.display="flex";
+ if(isDev) document.getElementById("devBtn").style.display="block";
+ loadChats();
 }
 
-// ---------- CHATS ----------
+async function createChat(){
+ let u=prompt("Username to chat with").toLowerCase();
+ let chat=await addDoc(collection(db,"chats"),{members:[myUsername,u],name:"Chat"});
+ openChat(chat.id);
+}
+
 function loadChats(){
- const q=query(collection(db,"chats"),where("members","array-contains",me.uid));
- onSnapshot(q,s=>{
-  chats.innerHTML="";
-  s.forEach(d=>{
-   const div=document.createElement("div");
-   div.className="chatItem";
-   div.textContent=(d.data().emoji||"💬")+" "+d.data().name;
-   div.onclick=()=>openChat(d.id,d.data());
-   chats.appendChild(div);
-  });
- });
-}
-
-window.createChat=async()=>{
- const uname=prompt("username");
- if(!uname)return;
- const q=query(collection(db,"users"),where("username","==",uname.toLowerCase()));
- const s=await getDocs(q);
- if(s.empty)return alert("not found");
- const other=s.docs[0].id;
- await addDoc(collection(db,"chats"),{
-  name:uname,
-  emoji:"💬",
-  members:[me.uid,other]
- });
-};
-
-function openChat(id,data){
- currentChat=id;
- chatTitle.textContent=(data.emoji||"💬")+" "+data.name;
-
- onSnapshot(collection(db,"chats",id,"messages"),snap=>{
-  messages.innerHTML="";
-  snap.forEach(d=>{
-   const m=d.data();
-   if(blocked.includes(m.from))return;
-
-   const wrap=document.createElement("div");
-   wrap.className="bubble "+(m.from===me.uid?"me":"them");
-
-   const u=document.createElement("div");
-   u.className="username";
-   u.textContent=contacts[m.username]||m.username;
-
-   const t=document.createElement("div");
-   t.textContent=m.text;
-
-   wrap.append(u,t);
-   messages.appendChild(wrap);
-  });
-  messages.scrollTop=messages.scrollHeight;
- });
-}
-
-window.send=()=>{
- if(!msg.value||!currentChat)return;
- addDoc(collection(db,"chats",currentChat,"messages"),{
-  from:me.uid,
-  username:myUsername,
-  text:msg.value
- });
- msg.value="";
-};
-
-// ---------- MENU ----------
-window.toggleMenu=()=>chatMenu.style.display=
- chatMenu.style.display==="flex"?"none":"flex";
-
-window.renameChat=async()=>{
- const n=prompt("new name");
- if(n)await setDoc(doc(db,"chats",currentChat),{name:n},{merge:true});
-};
-
-window.changeEmoji=async()=>{
- const e=prompt("emoji");
- if(e)await setDoc(doc(db,"chats",currentChat),{emoji:e},{merge:true});
-};
-
-window.addPeople=async()=>{
- const u=prompt("username");
- const q=query(collection(db,"users"),where("username","==",u));
- const s=await getDocs(q);
- if(s.empty)return;
- const ref=doc(db,"chats",currentChat);
- const snap=await getDoc(ref);
- await updateDoc(ref,{members:[...snap.data().members,s.docs[0].id]});
-};
-
-window.removePeople=async()=>{
- const u=prompt("username");
- const q=query(collection(db,"users"),where("username","==",u));
- const s=await getDocs(q);
- if(s.empty)return;
- const ref=doc(db,"chats",currentChat);
- const snap=await getDoc(ref);
- await updateDoc(ref,{members:snap.data().members.filter(x=>x!==s.docs[0].id)});
-};
-
-// ---------- CONTACTS / BLOCK ----------
-window.addContact=()=>{
- const u=prompt("username");
- const n=prompt("display name");
- if(!u||!n)return;
- contacts[u]=n;
- setDoc(doc(db,"users",me.uid),{username:myUsername,blocked,contacts},{merge:true});
-};
-
-window.blockUser=async()=>{
- const u=prompt("username");
- const q=query(collection(db,"users"),where("username","==",u));
- const s=await getDocs(q);
- if(s.empty)return;
- blocked.push(s.docs[0].id);
- await setDoc(doc(db,"users",me.uid),{username:myUsername,blocked,contacts},{merge:true});
-};
-
-// ---------- CALLS ----------
-async function setupPC(){
- pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
- localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
- localVideo.srcObject=localStream;
- localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
- pc.ontrack=e=>remoteVideo.srcObject=e.streams[0];
- pc.onicecandidate=e=>{
-  if(e.candidate)addDoc(collection(callRef,"candidates"),e.candidate.toJSON());
- };
-}
-
-window.startCall=async()=>{
- if(!currentChat)return;
- callPopup.style.display="flex";
- callTitle.textContent="Calling…";
- callRef=doc(collection(db,"calls"));
- await setDoc(callRef,{chat:currentChat,from:me.uid});
- await setupPC();
- const offer=await pc.createOffer();
- await pc.setLocalDescription(offer);
- await updateDoc(callRef,{offer});
- onSnapshot(callRef,async s=>{
-  const d=s.data();
-  if(d.answer&&!pc.currentRemoteDescription){
-   await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
-  }
- });
- onSnapshot(collection(callRef,"candidates"),snap=>{
-  snap.docChanges().forEach(c=>{
-   if(c.type==="added")pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
-  });
- });
-};
-
-function listenIncomingCalls(){
- onSnapshot(collection(db,"calls"),snap=>{
-  snap.forEach(d=>{
-   if(d.data().from!==me.uid && d.data().chat===currentChat && !pc){
-    callRef=d.ref;
-    callPopup.style.display="flex";
-    callTitle.textContent="Incoming Call";
+ onSnapshot(collection(db,"chats"),snap=>{
+  let list=document.getElementById("chatList");
+  list.innerHTML="";
+  snap.forEach(c=>{
+   if(c.data().members.includes(myUsername)){
+    let d=document.createElement("div");
+    d.className="chatItem";
+    d.innerText=c.data().name;
+    d.onclick=()=>openChat(c.id);
+    list.appendChild(d);
    }
   });
  });
 }
 
-window.answerCall=async()=>{
- await setupPC();
- const snap=await getDoc(callRef);
- await pc.setRemoteDescription(new RTCSessionDescription(snap.data().offer));
- const answer=await pc.createAnswer();
- await pc.setLocalDescription(answer);
- await updateDoc(callRef,{answer});
+function openChat(id){
+ currentChat=id;
+ let msgBox=document.getElementById("messages");
+ msgBox.innerHTML="";
+ onSnapshot(query(collection(db,"chats",id,"messages"),orderBy("time")),snap=>{
+  msgBox.innerHTML="";
+  snap.forEach(m=>{
+   let data=m.data();
+   let div=document.createElement("div");
+   div.className=data.username===myUsername?"me":"other";
+   div.innerHTML=`<span class='user'>${data.username}${DEV_USERS.includes(data.username)?" DEV":""}</span>${data.text}`;
+   msgBox.appendChild(div);
+  });
+  msgBox.scrollTop=msgBox.scrollHeight;
+ });
+}
+
+window.send=async()=>{
+ let t=msg.value;
+ if(!t) return;
+ await addDoc(collection(db,"chats",currentChat,"messages"),{
+  text:t,
+  username:myUsername,
+  time:Date.now()
+ });
+ msg.value="";
 };
 
-window.hangup=()=>{
- callPopup.style.display="none";
- pc?.close(); pc=null;
- localStream?.getTracks().forEach(t=>t.stop());
+window.broadcast=async()=>{
+ let t=prompt("Broadcast message");
+ let chats=await getDocs(collection(db,"chats"));
+ chats.forEach(c=>{
+  if(c.data().members.includes(myUsername)){
+   addDoc(collection(db,"chats",c.id,"messages"),{
+    text:"📢 "+t,
+    username:myUsername,
+    time:Date.now()
+   });
+  }
+ });
 };
+
 </script>
 
+<style>
+body{margin:0;font-family:sans-serif;background:#0f172a;color:white}
+#app{display:none;height:100vh}
+#sidebar{width:30%;background:#111827;padding:10px;overflow:auto}
+#chat{flex:1;display:flex;flex-direction:column}
+#messages{flex:1;overflow:auto;padding:10px}
+.me{background:#2563eb;padding:8px;border-radius:10px;margin:5px;color:white;align-self:flex-end;max-width:70%}
+.other{background:#374151;padding:8px;border-radius:10px;margin:5px;color:white;align-self:flex-start;max-width:70%}
+.user{display:block;font-size:12px;color:#9ca3af}
+#input{display:flex;padding:10px;border-top:1px solid #1f2937}
+input{flex:1;padding:10px;border-radius:10px;border:none}
+button{background:#2563eb;border:none;color:white;padding:10px;border-radius:8px;margin:4px}
+.chatItem{padding:10px;background:#1f2937;margin:5px;border-radius:8px;cursor:pointer}
+</style>
+</head>
+
+<body>
+<div id="login" style="text-align:center;margin-top:100px">
+ <h1>Simple Chat</h1>
+ <button onclick="login()">Sign in with Google</button>
+</div>
+
+<div id="app">
+ <div id="sidebar">
+  <button onclick="createChat()">➕ Chat</button>
+  <button id="devBtn" style="display:none" onclick="broadcast()">DEV Broadcast</button>
+  <div id="chatList"></div>
+ </div>
+
+ <div id="chat">
+  <div id="messages"></div>
+  <div id="input">
+   <input id="msg" placeholder="Message">
+   <button onclick="send()">Send</button>
+  </div>
+ </div>
+</div>
 </body>
 </html>
